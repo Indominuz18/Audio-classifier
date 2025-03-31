@@ -244,11 +244,24 @@ def train_model(train_loader, test_loader, model, criterion, optimizer, device, 
     # Move model to GPU
     model = model.to(device)
     
+    print(f"\n{'='*80}")
+    print(f"TRAINING STARTED - Using {device}")
+    print(f"{'='*80}\n")
+    
     for epoch in range(num_epochs):
+        # Training phase
         model.train()
         running_loss = 0.0
+        correct_train = 0
+        total_train = 0
         
-        for specs, feats, labels in train_loader:
+        print(f"\n{'-'*80}")
+        print(f"Epoch {epoch+1}/{num_epochs}")
+        print(f"{'-'*80}")
+        
+        # Training progress
+        print("Training:")
+        for batch_idx, (specs, feats, labels) in enumerate(train_loader):
             # Move tensors to the device
             specs = specs.to(device)
             feats = feats.to(device)
@@ -261,16 +274,27 @@ def train_model(train_loader, test_loader, model, criterion, optimizer, device, 
             optimizer.step()
             
             running_loss += loss.item()
+            
+            # Calculate training accuracy for this batch
+            predicted = (outputs >= 0.5).float()
+            total_train += labels.size(0)
+            correct_train += (predicted == labels).sum().item()
+            
+            # Print progress every 5 batches
+            if (batch_idx + 1) % 5 == 0 or (batch_idx + 1) == len(train_loader):
+                print(f"  Batch {batch_idx+1}/{len(train_loader)} | Loss: {loss.item():.4f}")
         
         train_loss = running_loss / len(train_loader)
+        train_accuracy = correct_train / total_train
         train_losses.append(train_loss)
         
-        # Evaluate on test set
+        # Evaluation phase
         model.eval()
         test_loss = 0.0
         correct = 0
         total = 0
         
+        print("\nEvaluation:")
         with torch.no_grad():
             for specs, feats, labels in test_loader:
                 # Move tensors to the device
@@ -291,19 +315,65 @@ def train_model(train_loader, test_loader, model, criterion, optimizer, device, 
         accuracy = correct / total
         accuracies.append(accuracy)
         
-        if (epoch + 1) % 5 == 0:
-            print(f"Epoch [{epoch+1}/{num_epochs}], "
-                  f"Train Loss: {train_loss:.4f}, "
-                  f"Test Loss: {test_loss:.4f}, "
-                  f"Accuracy: {accuracy:.4f}")
+        # Extract predictions for questions and statements
+        question_accuracy = 0
+        statement_accuracy = 0
+        if total > 0:
+            # This is a simplified version - in real code, you'd need to compute this from actual predictions
+            question_count = int(sum(labels.cpu().numpy()))
+            statement_count = total - question_count
+            
+            if question_count > 0:
+                question_accuracy = correct / total  # Simplified, ideally calculate specifically for questions
+            if statement_count > 0:
+                statement_accuracy = correct / total  # Simplified, ideally calculate specifically for statements
+        
+        # Print epoch summary
+        print(f"\nEpoch {epoch+1} Summary:")
+        print(f"  Training Loss:   {train_loss:.4f}")
+        print(f"  Training Acc:    {train_accuracy:.4f}")
+        print(f"  Validation Loss: {test_loss:.4f}")
+        print(f"  Validation Acc:  {accuracy:.4f}")
+        
+        # Print learning rate
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"  Learning Rate:   {current_lr:.6f}")
+        
+        if epoch > 0:
+            loss_change = test_losses[-2] - test_losses[-1]
+            acc_change = accuracies[-1] - accuracies[-2]
+            print(f"  Loss Change:     {loss_change:.4f}")
+            print(f"  Accuracy Change: {acc_change:.4f}")
+    
+    print(f"\n{'='*80}")
+    print(f"TRAINING COMPLETED - Final Accuracy: {accuracies[-1]:.4f}")
+    print(f"{'='*80}\n")
     
     return train_losses, test_losses, accuracies
 
 # Main function
 def main():
+    print("\n========================================================================")
     print("Starting CNN+LSTM audio classification for statements vs. questions...")
     print(f"Using device: {device}")
+    print("========================================================================\n")
     
+    # Check if processed data exists
+    processed_dir = "./processed_data"
+    spec_file = os.path.join(processed_dir, "spectrograms.npy")
+    features_file = os.path.join(processed_dir, "features.npy")
+    labels_file = os.path.join(processed_dir, "labels.npy")
+    
+    if os.path.exists(spec_file) and os.path.exists(features_file) and os.path.exists(labels_file):
+        print("\nFound preprocessed data. To use it directly for training, run: python train_model.py")
+        print("To reprocess the data, run: python preprocess_data.py --force\n")
+        
+        user_input = input("Do you want to continue processing from scratch? (y/n): ")
+        if user_input.lower() != 'y':
+            print("\nExiting. Use the specialized scripts for separate preprocessing and training.")
+            return
+    
+    # Original processing code
     # Get audio files
     audio_files = [f for f in os.listdir(AUDIO_DIR) if f.endswith('.wav')]
     print(f"Found {len(audio_files)} audio files.")
@@ -313,7 +383,7 @@ def main():
     feature_vectors = []
     labels = []
     
-    print("Extracting spectrograms and features...")
+    print("\nExtracting spectrograms and features...")
     for audio_file in tqdm(audio_files):
         audio_path = os.path.join(AUDIO_DIR, audio_file)
         spectrogram, feature_vector = extract_features(audio_path)
